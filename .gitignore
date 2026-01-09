@@ -1,0 +1,15 @@
+# Data & models
+data/
+checkpoints/
+logs/
+results/
+
+# Python
+__pycache__/
+*.pyc
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Environment
+.env
