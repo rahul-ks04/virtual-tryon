@@ -3,6 +3,7 @@ data/
 checkpoints/
 logs/
 results/
+model/
 
 # Python
 __pycache__/
