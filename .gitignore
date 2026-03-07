@@ -14,3 +14,8 @@ __pycache__/
 
 # Environment
 .env
+
+/Self-Correction-Human-Parsing
+/detectron2
+inputs/
+outputs/
