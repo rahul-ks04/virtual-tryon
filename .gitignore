@@ -19,3 +19,4 @@ __pycache__/
 /detectron2
 inputs/
 outputs/
+/FVNT
