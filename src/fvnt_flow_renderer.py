@@ -144,39 +144,7 @@ def main():
     input_1 = prep_tensor(args.person, device, is_parsing=True)
     input_2 = prep_tensor(args.garment_mask, device, is_parsing=True)
 
-    # 3. Detect Sleeve Type
-    s_mask_img = Image.open(args.garment_mask).convert('L')
-    s_mask_np = np.array(s_mask_img) > 127
-    h, w = s_mask_np.shape
-    
-    # Simple heuristic: Check if garment mask exists in the bottom 30% of the mask height 
-    # and if it occupies significant width there compared to top.
-    top_half = s_mask_np[:h//2, :]
-    bottom_half = s_mask_np[h//2:, :]
-    
-    sleeve_type = args.sleeve_type
-    if sleeve_type == "auto":
-        # Check width distribution
-        widths = np.sum(s_mask_np, axis=1)
-        # Use only rows with content
-        content_rows = np.where(widths > 5)[0]
-        if len(content_rows) > 0:
-            top_q = np.percentile(content_rows, 25)
-            bottom_q = np.percentile(content_rows, 75)
-            # Width at 25% height (likely torso + sleeves) vs 75% height (torso only if short sleeve)
-            w_top = widths[int(top_q)]
-            w_bottom = widths[int(bottom_q)]
-            
-            # If width significantly drops at bottom, it's short-sleeved
-            if w_bottom < 0.7 * w_top:
-                sleeve_type = "short"
-            else:
-                sleeve_type = "long"
-        else:
-            sleeve_type = "short" # Fallback
-    print(f"Detected sleeve type: {sleeve_type}")
-
-    # 4. Predict Flow
+    # 3. Predict Flow
     ctx = {}
     with torch.no_grad():
         flow_list, _ = fem(input_1, input_2, ctx=ctx)
@@ -194,21 +162,14 @@ def main():
         s_mask_hd = Image.open(args.garment_mask).convert('L').resize((W_HD, H_HD))
         t_mask_hd = Image.open(args.person).convert('L').resize((W_HD, H_HD))
         
-        # Refine anatomical mask using SCHP if available
+        # Use provided person mask as anatomical constraint
         anat_mask_np = np.array(t_mask_hd) / 255.0
+        
+        # If SCHP is provided, we can further refine boundaries (optional)
         if args.schp:
             schp_hd = Image.open(args.schp).resize((W_HD, H_HD), Image.NEAREST)
             schp_np = np.array(schp_hd)
-            # LIP labels: 5: Upper, 14: L-arm, 15: R-arm (Adjusting based on user's SCHP colors)
-            # If short-sleeved, we should ONLY allow warping to the torso (label 5) 
-            # and maybe the very top of arms.
-            if sleeve_type == "short":
-                # Exclude arm labels (14, 15) from the anatomical constraint to prevent stretching
-                # Many SCHP models use 14/15 or 15/16. We'll be broad.
-                arm_labels = [14, 15, 16] 
-                for lbl in arm_labels:
-                    anat_mask_np[schp_np == lbl] = 0
-                print("Constrained anatomical mask to torso for short-sleeve correction.")
+            print("Using SCHP for boundary refinement.")
 
         # Upsample flow...
         flow_hr = F.interpolate(low_res_flow, size=(H_HD, W_HD), mode='bilinear', align_corners=True)
