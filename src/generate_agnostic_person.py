@@ -18,8 +18,12 @@ def generate_agnostic(img_path, parse_path, output_dir, dilation_kernel_size=25,
     """
     Generates agnostic image and parsing map.
     """
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    agnostic_img_dir = os.path.join(output_dir, "img")
+    agnostic_parse_dir = os.path.join(output_dir, "parse")
+    agnostic_mask_dir = os.path.join(output_dir, "mask")
+    os.makedirs(agnostic_img_dir, exist_ok=True)
+    os.makedirs(agnostic_parse_dir, exist_ok=True)
+    os.makedirs(agnostic_mask_dir, exist_ok=True)
 
     # Load image and parsing
     image = np.array(Image.open(img_path).convert("RGB"))
@@ -77,15 +81,19 @@ def generate_agnostic(img_path, parse_path, output_dir, dilation_kernel_size=25,
 
     # Save results
     img_name = Path(img_path).name
-    Image.fromarray(agnostic_img).save(os.path.join(output_dir, img_name))
+    Image.fromarray(agnostic_img).save(os.path.join(agnostic_img_dir, img_name))
     
     # Save debug image
     debug_name = "debug_" + img_name
     Image.fromarray(debug_img).save(os.path.join(output_dir, debug_name))
     
+    # Save mask
+    mask_name = img_name
+    Image.fromarray((final_agnostic_mask * 255).astype(np.uint8)).save(os.path.join(agnostic_mask_dir, mask_name))
+    
     # Save parsing as PNG
     parse_name = Path(parse_path).name
-    Image.fromarray(agnostic_parse.astype(np.uint8)).save(os.path.join(output_dir, parse_name))
+    Image.fromarray(agnostic_parse.astype(np.uint8)).save(os.path.join(agnostic_parse_dir, parse_name))
 
     print(f"Generated agnostic person: {os.path.join(output_dir, img_name)}")
     print(f"Generated debug visualization: {os.path.join(output_dir, debug_name)}")
