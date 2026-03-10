@@ -45,8 +45,8 @@ def preprocess_garment(garment_path, garment_type, output_dir, schp_mask_path=No
             _, mask = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY_INV)
 
     # 2. Save Results
-    cv2.imwrite(os.path.join(output_dir, "garment_rgb.png"), img)
-    cv2.imwrite(os.path.join(output_dir, "garment_mask.png"), mask)
+    cv2.imwrite(os.path.join(output_dir, "cloth.png"), img)
+    cv2.imwrite(os.path.join(output_dir, "cloth_mask.png"), mask)
     
     # 3. Generate source_parsing.pt (Tensor expected by some flow renderers)
     # This is a dummy/simplified version - actual requirements vary by model

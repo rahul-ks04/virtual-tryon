@@ -16,7 +16,7 @@ def run_schp(input_dir, output_dir, project_root):
         os.makedirs(output_dir)
         
     cmd = [
-        "python", "simple_extractor.py",
+        sys.executable, "simple_extractor.py",
         "--dataset", "lip",
         "--model-restore", model_path,
         "--input-dir", input_dir,
@@ -26,9 +26,11 @@ def run_schp(input_dir, output_dir, project_root):
     print(f"Running SCHP in {schp_root}...")
     print(f"Command: {' '.join(cmd)}")
     
-    result = subprocess.run(cmd, cwd=schp_root)
-    if result.returncode != 0:
-        print("SCHP failed.")
+    # Run with check=True to raise error if it fails
+    try:
+        result = subprocess.run(cmd, cwd=schp_root, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"SCHP failed with error: {e}")
         sys.exit(1)
         
     print(f"SCHP complete. Results in {output_dir}")

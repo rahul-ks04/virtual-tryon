@@ -47,22 +47,63 @@ def run_densepose(input_path, output_dir, project_root):
     with torch.no_grad():
         outputs = predictor(img)["instances"]
 
-    # Visualize results
-    print("Visualizing results...")
-    visualizer = DensePoseResultsFineSegmentationVisualizer()
+    # Initialize extractor (visualizer is no longer needed for this output type)
     extractor = DensePoseResultExtractor()
     
-    # Process outputs
+    # Step 5: Extract raw part indices
     results = extractor(outputs)
     
-    # Create black background for visualization
-    background = np.zeros_like(img)
+    # Create raw part index map (same size as input image)
+    part_map = np.zeros(img.shape[:2], dtype=np.uint8)
     
-    vis_img = visualizer.visualize(background, results)
+    # We need to iterate over instances and their corresponding extractor results
+    for i in range(len(outputs)):
+        inst_res = results[i]
+        # inst_res is usually a list of DensePose results
+        if not isinstance(inst_res, list) or len(inst_res) == 0:
+            continue
+            
+        # Get bbox from instances (for coordinate mapping)
+        # box is [x1, y1, x2, y2]
+        bbox = outputs[i].pred_boxes.tensor[0].cpu().numpy()
+        x1, y1, x2, y2 = map(int, bbox)
+        
+        # Take the first sub-result (most common for single person)
+        for dp_res in inst_res:
+            if dp_res is None or not hasattr(dp_res, 'labels'):
+                continue
+            
+            # labels is the segmentation map [0-24] for the box
+            labels = dp_res.labels.cpu().numpy()
+            
+            w = max(1, x2 - x1)
+            h = max(1, y2 - y1)
+            # Interpolate labels to the detected bounding box size
+            labels_resized = cv2.resize(labels, (w, h), interpolation=cv2.INTER_NEAREST)
+            
+            # Clip boundaries to image size
+            im_h, im_w = part_map.shape
+            y1_c = max(0, y1)
+            y2_c = min(im_h, y2)
+            x1_c = max(0, x1)
+            x2_c = min(im_w, x2)
+            
+            # Crop resized labels to match clipped bbox
+            crop_y1 = y1_c - y1
+            crop_y2 = crop_y1 + (y2_c - y1_c)
+            crop_x1 = x1_c - x1
+            crop_x2 = crop_x1 + (x2_c - x1_c)
+            
+            if crop_y2 > crop_y1 and crop_x2 > crop_x1:
+                # Use maximum if multiple detections overlap
+                part_map[y1_c:y2_c, x1_c:x2_c] = np.maximum(
+                    part_map[y1_c:y2_c, x1_c:x2_c], 
+                    labels_resized[crop_y1:crop_y2, crop_x1:crop_x2]
+                )
 
-    # Save output
-    cv2.imwrite(output_image_path, vis_img)
-    print(f"Result saved to: {output_image_path}")
+    # Save output as grayscale indices (essential for generate_target_mask.py)
+    cv2.imwrite(output_image_path, part_map)
+    print(f"Raw part indices saved to: {output_image_path}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
