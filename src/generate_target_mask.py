@@ -4,83 +4,73 @@ import numpy as np
 import argparse
 from PIL import Image
 
-def generate_target_mask(schp_path, densepose_path, output_dir, sleeve_type="auto", garment_mask=None):
+def generate_target_mask(schp_path, densepose_path, output_dir, sleeve_type="full"):
     """
-    Generates a target mask for virtual try-on by combining 
-    human parsing (SCHP) and DensePose data, with sleeve awareness.
+    Generates a robust target mask based on the approved strategy.
+    
+    Args:
+        schp_path: Path to SCHP parsing image.
+        densepose_path: Path to DensePose IUV image.
+        output_dir: Directory to save the output.
+        sleeve_type: 'none', 'half', or 'full'.
     """
     os.makedirs(output_dir, exist_ok=True)
     
-    # Load SCHP parsing
-    parsing_img = Image.open(schp_path)
-    parsing = np.array(parsing_img)
-    
-    # Load DensePose labels
-    densepose_img = cv2.imread(densepose_path, cv2.IMREAD_GRAYSCALE)
-    if densepose_img is None:
+    # 1. Load Inputs
+    parsing = np.array(Image.open(schp_path))
+    dp_img = cv2.imread(densepose_path)
+    if dp_img is None:
         raise ValueError(f"Could not load DensePose image from {densepose_path}")
-        
-    # Person mask from SCHP
-    person_mask = (parsing != 0)
     
-    # 1. Sleeve detection if auto
-    if sleeve_type == "auto" and garment_mask is not None:
-        g_mask = np.array(Image.open(garment_mask).convert('L')) > 127
-        h_g, w_g = g_mask.shape
-        widths = np.sum(g_mask, axis=1)
-        content_rows = np.where(widths > 5)[0]
-        if len(content_rows) > 10:
-            top_y = content_rows[0]
-            bottom_y = content_rows[-1]
-            total_h = bottom_y - top_y
-            
-            # Sample width at 1/3 (shoulders/chest) and 2/3 (forearms level if long sleeve)
-            w_top = widths[int(top_y + total_h * 0.3)]
-            w_mid = widths[int(top_y + total_h * 0.6)]
-            
-            # If width drops significantly at mid-length, it's likely short-sleeved
-            # Long sleeves usually maintain a wider profile further down the body than short sleeves
-            if w_mid < 0.6 * w_top:
-                sleeve_type = "short"
-            else:
-                sleeve_type = "long"
-        else:
-            sleeve_type = "short"
-        print(f"Detected sleeve type for mask generation: {sleeve_type}")
+    # DensePose Index 'I'
+    dp_i = dp_img[:, :, 0] if len(dp_img.shape) == 3 else dp_img
 
-    # 2. Define anatomical regions (LIP Labels)
-    # 5: Upper, 6: Dress, 7: Coat
-    torso_mask = np.isin(parsing, [5, 6, 7]) 
-    arm_mask = np.isin(parsing, [14, 15]) # L-arm, R-arm (skin)
+    # 2. Define Masks
+    # Preservation (Exclude from target mask)
+    # 1: Hat, 2: Hair, 4: Sunglasses, 13: Face
+    # 9: Pants, 12: Skirts, 16: L-Leg, 17: R-Leg, 18: L-Shoe, 19: R-Shoe
+    exclude_indices = [1, 2, 4, 9, 12, 13, 16, 17, 18, 19]
+    exclude_mask = np.isin(parsing, exclude_indices)
     
-    # Base target mask starts with torso/existing clothes
-    target_mask_bool = torso_mask.copy()
+    # Core Torso (Always include)
+    # DensePose 1, 2: Torso
+    # SCHP 5: UpperClothes, 6: Dress, 7: Coat
+    target_mask = np.isin(dp_i, [1, 2]) | np.isin(parsing, [5, 6, 7])
     
-    if sleeve_type == "long":
-        # Merge arms to allow warping onto the full length
-        target_mask_bool |= arm_mask
-    elif sleeve_type == "short":
-        # Do not add arms, let the projection handle minor refinements
-        pass
+    # 3. Handle Arms based on sleeve_type
+    # DensePose 3-6: Upper Arms, 7-10: Lower Arms
+    # SCHP 14, 15: Arms
+    if sleeve_type == "full":
+        target_mask |= np.isin(dp_i, range(3, 11)) | np.isin(parsing, [14, 15])
+    elif sleeve_type == "half":
+        target_mask |= np.isin(dp_i, [3, 4, 5, 6])
     
-    # Constraint: Must be within human silhouette as defined by DensePose
-    target_mask_bool &= (densepose_img > 0)
+    # 4. Final Cleanup
+    # Ensure no preservation areas are in the target mask
+    target_mask[exclude_mask] = False
     
-    target_mask = target_mask_bool.astype(np.uint8)
+    # Convert to float for processing
+    mask_float = target_mask.astype(np.float32)
     
-    # Save the target mask as a binary image (0 or 255)
+    # Dilation to bridge gaps
+    kernel = np.ones((7, 7), np.uint8)
+    mask_float = cv2.dilate(mask_float, kernel, iterations=1)
+    
+    # Gaussian Blur for smooth edges (essential for flow renderer)
+    mask_float = cv2.GaussianBlur(mask_float, (15, 15), 5)
+    
+    # 5. Save Results
     output_path = os.path.join(output_dir, "target_mask.png")
-    cv2.imwrite(output_path, target_mask * 255)
+    cv2.imwrite(output_path, (mask_float * 255).astype(np.uint8))
     
-    print(f"Target mask generated and saved to {output_path}")
+    print(f"Target mask ({sleeve_type}) generated and saved to {output_path}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--schp", required=True, help="Path to SCHP parsing PNG")
     parser.add_argument("--densepose", required=True, help="Path to DensePose output PNG")
     parser.add_argument("--output_dir", required=True)
-    parser.add_argument("--sleeve_type", choices=["auto", "short", "long", "sleeveless"], default="auto")
-    parser.add_argument("--garment_mask", help="Path to garment mask (required if sleeve_type is auto)")
+    parser.add_argument("--sleeve_type", choices=["none", "half", "full"], default="full")
     args = parser.parse_args()
     
-    generate_target_mask(args.schp, args.densepose, args.output_dir, args.sleeve_type, args.garment_mask)
+    generate_target_mask(args.schp, args.densepose, args.output_dir, args.sleeve_type)
