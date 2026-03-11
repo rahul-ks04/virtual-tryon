@@ -35,10 +35,14 @@ def preprocess_garment(garment_path, garment_type, output_dir, schp_mask_path=No
     else:
         # For worn garments, we use the parsing mask from SCHP
         if schp_mask_path and os.path.exists(schp_mask_path):
-            parse_mask = cv2.imread(schp_mask_path, cv2.IMAGING_MODE_GRAY if hasattr(cv2, 'IMAGING_MODE_GRAY') else 0)
+            # MUST use PIL to read SCHP output — it's a palette PNG.
+            # cv2.imread in grayscale converts palette colors to grayscale
+            # values, losing the actual label indices.
+            parse_img = Image.open(schp_mask_path)
+            parse_mask = np.array(parse_img)
             parse_mask = cv2.resize(parse_mask, (768, 1024), interpolation=cv2.INTER_NEAREST)
-            # Label 5 is usually 'Upper-clothes' in LIP/SCHP
-            mask = np.where(parse_mask == 5, 255, 0).astype(np.uint8)
+            # LIP/SCHP labels: 5 = Upper-clothes, 6 = Dress, 7 = Coat
+            mask = np.where(np.isin(parse_mask, [5, 6, 7]), 255, 0).astype(np.uint8)
         else:
             print("Warning: Worn garment type selected but no SCHP mask provided. Using threshold fallback.")
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)

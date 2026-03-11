@@ -67,7 +67,26 @@ def main(person_image, garment_image, garment_type, sleeve_type, output_root, pr
     garment_cmd = gen_python_cmd + [os.path.join(project_root, "src/preprocess_garment.py"),
                    "--type", garment_type, "--input", garment_image, "--output_dir", garment_dir]
     if garment_type == "worn":
-        garment_cmd += ["--schp_mask", schp_mask]
+        # Run SCHP on the garment image (the person wearing the target garment)
+        # to get their parsing mask, so we can extract just the garment region
+        schp_garment_input_dir = os.path.join(output_root, "temp_schp_garment_input")
+        schp_garment_dir = os.path.join(output_root, "schp_garment")
+        if os.path.exists(schp_garment_input_dir):
+            shutil.rmtree(schp_garment_input_dir)
+        os.makedirs(schp_garment_input_dir, exist_ok=True)
+        shutil.copy(garment_image, os.path.join(schp_garment_input_dir, "garment.png"))
+        
+        print("\n--- Step 4a: Parsing Garment Wearer (SCHP) ---")
+        if not run_cmd(schp_python_cmd + [os.path.join(project_root, "src/run_schp.py"),
+                        "--input_dir", schp_garment_input_dir, "--output_dir", schp_garment_dir, "--project_root", project_root]):
+            return False
+        
+        garment_schp_mask = os.path.join(schp_garment_dir, "garment.png")
+        garment_cmd += ["--schp_mask", garment_schp_mask]
+        
+        # Clean up temp dir
+        if os.path.exists(schp_garment_input_dir):
+            shutil.rmtree(schp_garment_input_dir)
         
     if not run_cmd(garment_cmd):
         return False
