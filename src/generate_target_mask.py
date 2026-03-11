@@ -44,41 +44,29 @@ def generate_target_mask(schp_path, densepose_path, output_dir, sleeve_type="ful
     
     # 3. Refine based on sleeve_type
     if sleeve_type == "full":
-        # Strategy: Include Torso + All Arms detection. 
+        # Strategy: Include Torso + All Arms detection (15-22). 
         # FALLBACK: Use person silhouette but strictly block the exclusion zones (Pants/Head)
-        target_mask = base_torso_garment | np.isin(dp_i, range(3, 11)) | np.isin(parsing, [14, 15])
+        target_mask = base_torso_garment | np.isin(dp_i, range(15, 23)) | np.isin(parsing, [14, 15])
         
         if p_mask is not None:
-            # Robust garment area = (Person Silhouette) AND NOT (Excluded zone: Pants/Head)
-            # This ensures it stops at the waistline naturally.
             p_mask_bool = p_mask.astype(bool)
             robust_full_garment = p_mask_bool & (~exclude_mask)
             target_mask |= robust_full_garment
             
     elif sleeve_type == "half":
         target_mask = base_torso_garment.copy()
-        lower_arms_dp = np.isin(dp_i, [7, 8, 9, 10])
+        # DP [19, 20, 21, 22] = Lower Arms
+        lower_arms_dp = np.isin(dp_i, [19, 20, 21, 22])
         if np.sum(lower_arms_dp) > 0:
-            # Smaller elliptical kernel reduces chunky sleeve cutoffs.
             kernel_la = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
             lower_arms_broad = cv2.dilate(lower_arms_dp.astype(np.uint8), kernel_la, iterations=1).astype(bool)
             target_mask &= (~lower_arms_broad)
             
-        y_indices, x_indices = np.where(target_mask)
-        if len(y_indices) > 0:
-            y_min, y_max = y_indices.min(), y_indices.max()
-            x_center = np.median(x_indices)
-            x_width = x_indices.max() - x_indices.min()
-            elbow_y = y_min + (y_max - y_min) * 0.48
-            arm_boundary_dist = x_width * 0.22
-            h, w = target_mask.shape
-            yy, xx = np.mgrid[:h, :w]
-            prune_area = (yy > elbow_y) & (np.abs(xx - x_center) > arm_boundary_dist)
-            target_mask &= (~prune_area)
+        # Ensure hands (3, 4) are strictly excluded from garment
+        hands_dp = np.isin(dp_i, [3, 4])
+        target_mask &= (~hands_dp)
 
-        target_mask |= np.isin(dp_i, [3, 4, 5, 6])
-
-        # Smooth short-sleeve boundaries so they are less blocky.
+        # Smooth short-sleeve boundaries
         target_u8 = target_mask.astype(np.uint8)
         k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
         k_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
@@ -87,21 +75,36 @@ def generate_target_mask(schp_path, densepose_path, output_dir, sleeve_type="ful
         target_u8 = cv2.medianBlur((target_u8 * 255).astype(np.uint8), 5)
         target_mask = (target_u8 > 127)
     else: # none
-        arms_dp = np.isin(dp_i, range(3, 11)) | np.isin(parsing, [14, 15])
+        # DP [15-22] = All Arms
+        arms_dp = np.isin(dp_i, range(15, 23)) | np.isin(parsing, [14, 15])
         kernel_a = np.ones((25, 25), np.uint8)
         arms_broad = cv2.dilate(arms_dp.astype(np.uint8), kernel_a, iterations=1).astype(bool)
         target_mask = base_torso_garment & (~arms_broad)
     
-    # 4. Final Cleanup (Ensure no pants/head pixels slipped in)
+    # 4. Final Cleanup (Ensure no pants/head/hands pixels slipped in)
     target_mask[exclude_mask] = False
+    target_mask[np.isin(dp_i, [3, 4])] = False # Block hands
     
+    # --- CHIN CUTOFF FIX ---
+    # Find the chin (Face Bottom) and wipe out anything above it to prevent "turtle neck"
+    face_rows = np.where(parsing == 13)[0] # Face label
+    if len(face_rows) > 0:
+        face_bottom = face_rows.max()
+        target_mask[:face_bottom + 5, :] = False
+
     mask_float = target_mask.astype(np.float32)
-    # Final universal refinement with smooth edges.
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-    mask_float = cv2.dilate(mask_float, kernel, iterations=1)
+    
+    # 5. Universal Refinement & Speckle Removal
+    # morphology open removes small noise/speckles
+    kernel_noise = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    mask_float = cv2.morphologyEx(mask_float, cv2.MORPH_OPEN, kernel_noise)
+    
+    # Final smooth edges
+    kernel_dil = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    mask_float = cv2.dilate(mask_float, kernel_dil, iterations=1)
     mask_float = cv2.GaussianBlur(mask_float, (11, 11), 2)
     
-    # 5. Save Results
+    # 6. Save Results
     output_path = os.path.join(output_dir, "target_mask.png")
     mask_uint8 = (mask_float * 255).astype(np.uint8)
     
