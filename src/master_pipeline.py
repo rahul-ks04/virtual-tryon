@@ -30,7 +30,7 @@ def main():
     parser.add_argument("--person", help="Path to person image (auto-detected in inputs/ if omitted)")
     parser.add_argument("--garment", help="Path to garment image (auto-detected in inputs/ if omitted)")
     parser.add_argument("--type", choices=["flat", "worn"], default="flat", help="Garment type")
-    parser.add_argument("--sleeve_type", choices=["none", "half", "full"], default="full", help="Sleeve type of target garment")
+    parser.add_argument("--sleeve_type", "--sleeve_length", choices=["none", "half", "full"], default="full", dest="sleeve_type", help="Sleeve type of target garment (also accepts --sleeve_length)")
     parser.add_argument("--preserve_arms", action="store_true", help="Preserve original arms in agnostic generation")
     
     # Environment Names (Easier than full paths)
@@ -141,15 +141,15 @@ def main():
     if not run_cmd(conda_python(args.dp_env), os.path.join(p_root, "src/generate_agnostic_person.py"), agnostic_args):
         sys.exit(1)
 
-    # 4. StyleVTON Refined Synthesis
-    print("\n=== PHASE 4: STYLEVTON REFINED SYNTHESIS ===")
+    # 4. Layered Try-On Composition (surgical compositing, no GAN)
+    print("\n=== PHASE 4: LAYERED TRY-ON COMPOSITION ===")
     style_args = [
         "--agnostic", agnostic_img,
         "--original", person_no_bg,
         "--agnostic_mask", agnostic_mask,
         "--warped_cloth", warped_garment,
         "--warped_mask", projected_mask,
-        "--checkpoint", args.stylevton_ckpt,
+        "--parse", person_parse,
         "--output_path", final_output
     ]
     if not run_cmd(conda_python(args.stylevton_env), os.path.join(p_root, "src/run_stylevton.py"), style_args):

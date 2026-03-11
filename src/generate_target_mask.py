@@ -17,11 +17,16 @@ def generate_target_mask(schp_path, densepose_path, output_dir, sleeve_type="ful
         raise ValueError(f"Could not load DensePose image from {densepose_path}")
     
     dp_i = dp_img[:, :, 0] if len(dp_img.shape) == 3 else dp_img
+    # Keep all masks in the same resolution to avoid stair-step artifacts.
+    if dp_i.shape[:2] != parsing.shape[:2]:
+        dp_i = cv2.resize(dp_i, (parsing.shape[1], parsing.shape[0]), interpolation=cv2.INTER_NEAREST)
     
     p_mask = None
     if person_mask_path:
         p_mask_img = Image.open(person_mask_path).convert("L")
         p_mask = (np.array(p_mask_img) > 127).astype(np.uint8)
+        if p_mask.shape[:2] != parsing.shape[:2]:
+            p_mask = cv2.resize(p_mask, (parsing.shape[1], parsing.shape[0]), interpolation=cv2.INTER_NEAREST)
 
     # 2. Define Masks
     # LIP Labels to EXCLUDE (Preserve):
@@ -54,7 +59,8 @@ def generate_target_mask(schp_path, densepose_path, output_dir, sleeve_type="ful
         target_mask = base_torso_garment.copy()
         lower_arms_dp = np.isin(dp_i, [7, 8, 9, 10])
         if np.sum(lower_arms_dp) > 0:
-            kernel_la = np.ones((15, 15), np.uint8)
+            # Smaller elliptical kernel reduces chunky sleeve cutoffs.
+            kernel_la = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
             lower_arms_broad = cv2.dilate(lower_arms_dp.astype(np.uint8), kernel_la, iterations=1).astype(bool)
             target_mask &= (~lower_arms_broad)
             
@@ -69,8 +75,17 @@ def generate_target_mask(schp_path, densepose_path, output_dir, sleeve_type="ful
             yy, xx = np.mgrid[:h, :w]
             prune_area = (yy > elbow_y) & (np.abs(xx - x_center) > arm_boundary_dist)
             target_mask &= (~prune_area)
-            
+
         target_mask |= np.isin(dp_i, [3, 4, 5, 6])
+
+        # Smooth short-sleeve boundaries so they are less blocky.
+        target_u8 = target_mask.astype(np.uint8)
+        k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+        k_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        target_u8 = cv2.morphologyEx(target_u8, cv2.MORPH_CLOSE, k_close)
+        target_u8 = cv2.morphologyEx(target_u8, cv2.MORPH_OPEN, k_open)
+        target_u8 = cv2.medianBlur((target_u8 * 255).astype(np.uint8), 5)
+        target_mask = (target_u8 > 127)
     else: # none
         arms_dp = np.isin(dp_i, range(3, 11)) | np.isin(parsing, [14, 15])
         kernel_a = np.ones((25, 25), np.uint8)
@@ -81,9 +96,10 @@ def generate_target_mask(schp_path, densepose_path, output_dir, sleeve_type="ful
     target_mask[exclude_mask] = False
     
     mask_float = target_mask.astype(np.float32)
-    kernel = np.ones((7, 7), np.uint8)
+    # Final universal refinement with smooth edges.
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
     mask_float = cv2.dilate(mask_float, kernel, iterations=1)
-    mask_float = cv2.GaussianBlur(mask_float, (15, 15), 5)
+    mask_float = cv2.GaussianBlur(mask_float, (11, 11), 2)
     
     # 5. Save Results
     output_path = os.path.join(output_dir, "target_mask.png")
