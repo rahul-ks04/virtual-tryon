@@ -31,7 +31,9 @@ def main():
     parser.add_argument("--garment", help="Path to garment image (auto-detected in inputs/ if omitted)")
     parser.add_argument("--type", choices=["flat", "worn"], default="flat", help="Garment type")
     parser.add_argument("--sleeve_type", "--sleeve_length", choices=["none", "half", "full"], default="full", dest="sleeve_type", help="Sleeve type of target garment (also accepts --sleeve_length)")
+    parser.add_argument("--initial_sleeve", choices=["none", "half", "full"], default="half", help="Initial sleeve type of the person (what they are wearing in the photo)")
     parser.add_argument("--preserve_arms", action="store_true", help="Preserve original arms in agnostic generation")
+    parser.add_argument("--inpaint_skin", action="store_true", default=True, help="Enable GAN-based skin inpainting for occluded arms (e.g. full-to-half sleeve)")
     
     # Environment Names (Easier than full paths)
     parser.add_argument("--schp_env", default="schp")
@@ -150,8 +152,13 @@ def main():
         "--warped_cloth", warped_garment,
         "--warped_mask", projected_mask,
         "--parse", person_parse,
-        "--output_path", final_output
+        "--densepose", densepose_img,
+        "--output_path", final_output,
+        "--initial_sleeve", args.initial_sleeve
     ]
+    if args.inpaint_skin:
+        style_args += ["--inpaint_skin", "--checkpoint", args.stylevton_ckpt]
+
     if not run_cmd(conda_python(args.stylevton_env), os.path.join(p_root, "src/run_stylevton.py"), style_args):
         sys.exit(1)
 
